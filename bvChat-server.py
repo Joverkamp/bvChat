@@ -1,11 +1,23 @@
 from socket import *
 from pathlib import Path
 
-def recvAll(sock, numBytes):
-    data = b''
-    while (len(data) < numBytes):
-        data += sock.recv(numBytes - len(data))
-    return data
+def getFullMsg(conn, msgLength):
+    msg = b''
+    while len(msg) < msgLength:
+        retVal = conn.recv(msgLength - len(msg))
+        msg += retVal
+        if len(retVal) == 0:
+            break   
+    return msg
+
+def getLine(conn):
+    msg = b''
+    while True:
+        ch = conn.recv(1)
+        msg += ch
+        if ch == b'\n' or len(ch) == 0:
+            break
+    return msg.decode()
 
 port = 27120
 
