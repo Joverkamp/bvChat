@@ -1,5 +1,29 @@
 from socket import *
-from pathlib import Path
+import threading
+import hashlib
+import sys
+import time
+import os.path
+from os import path
+
+
+# Get users/passwords from file
+userPassList = {}
+if path.exists("users.txt"):
+    with open("users.txt", "r") as f:
+        lines = f.readlines()
+    for line in lines:
+        line = line.rstrip()
+        userPass = line.split(":")
+        userPassList[userPass[0]] = userPass[1]
+userPassListLock = threading.Lock()
+
+
+port = 27120
+listener = socket(AF_INET, SOCK_STREAM)
+listener.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+listener.bind(('', port))
+listener.listen(32) # Support up to 32 simultaneous connections
 
 def getFullMsg(conn, msgLength):
     msg = b''
@@ -19,27 +43,35 @@ def getLine(conn):
             break
     return msg.decode()
 
-port = 27120
 
-listener = socket(AF_INET, SOCK_STREAM)
-listener.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-listener.bind( ('', port) )
-listener.listen(4)
-print("Server is now listening for connections on port", port)
+def userExists(username, password):
+    userPassListLock.acquire()
+    if username in userPassList:
+        print("User exists!")
+    else:
+        userPassList[username] = password
+        print("User {} added!".format(username))
+    userPassListLock.release()
 
-try:
-  while True:
-    (conn, clientAddr) = listener.accept()
-    print("Client Connected")
+
+
+def handleClient(connInfo):
+    clientConn, clientAddr = connInfo
+    clientIP = clientAddr[0]
+    clientPort = clientAddr[1]
+    print("Recieved connection from {}:{}".format(clientIP, clientPort))
     
-    # Retreive files available for sending
-    folder = Path("./repository")
-    if not folder.exists():
-        folder.mkdir(parents=True, exist_ok=True)
+    incoming = getLine(clientConn)
+    username = incoming.rstrip()
+    incoming = getLine(clientConn)
+    password = incoming.rstrip()
+   
+    userExists(username,password)
 
-    print("Client Connection Closed")
-    conn.close()
-
-
-except KeyboardInterrupt:
-  print("Killing server...")
+running = True
+while running:
+    try:
+        threading.Thread(target=handleClient, args=(listener.accept(),), daemon=True).start()
+    except KeyboardInterrupt:
+        print('\n[Shutting down]')
+        running = False
