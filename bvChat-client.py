@@ -3,6 +3,11 @@ from socket import *
 from sys import argv
 from pathlib import Path
 
+
+tryingLogin = True
+
+loginReport = '0'
+
 def getFullMsg(conn, msgLength):
     msg = b''
     while len(msg) < msgLength:
@@ -32,6 +37,19 @@ serverPort = int(argv[2])
 # Establish connection
 clientSock = socket(AF_INET, SOCK_STREAM)
 clientSock.connect( (serverIP, serverPort) )
+
+#send username and password
+while (tryingLogin == True):
+    username = input("Enter username: ") + "\n"
+    password = input("Enter your password: ") + "\n"
+    clientSock.send(username.encode())
+    clientSock.send(password.encode())
+    loginReport = getLine(clientSock)
+    print(loginReport)
+    if(loginReport == '0\n'):
+        print(loginReport + "FAILURE")
+    elif (loginReport == '1\n'):
+        tryingLogin = False
 
 
 clientSock.close()
