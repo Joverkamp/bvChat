@@ -3,35 +3,33 @@ import threading
 import hashlib
 import sys
 import time
-import os.path
-from os import path
+import os
 from queue import Queue
+import json
 
-# Get users/passwords from file
-userPassList = {}
-userPassListLock = threading.Lock()
-if path.exists("users.txt"):
-    with open("users.txt", "r") as f:
-        lines = f.readlines()
-    for line in lines:
-        line = line.rstrip()
-        userPass = line.split(":")
-        userPassList[userPass[0]] = userPass[1]
+# load in user data that is saved upon server termination
+# this data includes
+#     -- username
+#     -- password
+#     -- loggedin (either "none" or an ip:port)
+#     -- mail (list of offline messages)
+userInfo = {}
+userInfoLock = threading.Lock()
+if os.path.exists("users.json") and os.stat("users.json").st_size != 0:
+    with open("users.json", "r") as f:
+        userInfo = json.load(f)
 
-# This dict holds users who are currentky logged in
-usersLoggedIn = {}
-usersLoggedInLock = threading.Lock()
-    
-# Dict for ips and last three invalid attempt timestamps
-ipBadAttempts = {}
-ipBadAttemptsLock = threading.Lock()
+# dict of ip:usernames and a list of there last three failed
+# login attempts
+ipUserFailStamps = {}
+ipUserFailStampsLock = threading.Lock()
 
-# List that holds blocked users
-tempBlockedUsers = []
-tempBlockedUsersLock = threading.Lock()
+# list for temporarily blocked ip/usernames
+ipUserBlocked = [] 
+ipUserBlockedLock = threading.Lock()
 
 # Set the message of the day
-if path.exists("motd.txt"):
+if os.path.exists("motd.txt"):
     with open("motd.txt", "r") as f:
         motd = f.read()
 else:
@@ -62,48 +60,62 @@ def getLine(conn):
             break
     return msg.decode()
 
+def inputCheck(toCheck):
+    toCheck = toCheck.replace(" ","")
+    if toCheck == "" or len(toCheck) == 0:
+        return False
+    return True
 
-def userExists(username, password):
-    userPassListLock.acquire()
-    if username in userPassList:
-        userPassListLock.release()
+
+def createUser(username, password):
+    userInfoLock.acquire()
+    userInfo[username] = {}
+    userInfo[username]["password"] = password
+    userInfo[username]["loggedin"] = "none"
+    userInfo[username]["mail"] = []
+    userInfoLock.release()
+
+def userExists(username):
+    userInfoLock.acquire()
+    if username in userInfo:
+        userInfoLock.release()
         return True
     else:
-        userPassList[username] = password
-        print("User {} added.".format(username))
-        userPassListLock.release()
+        userInfoLock.release()
         return False
 
 
 def login(username, clientAddr): 
-    usersLoggedInLock.acquire()
-    usersLoggedIn[username] = "{}:{}".format(clientAddr[0],clientAddr[1])
-    usersLoggedInLock.release()
-
+    userInfoLock.acquire()
+    userInfo[username]["loggedin"] = clientAddr
+    userInfoLock.release()
+    print("{} logged in".format(username))
 
 def logout(username):
-    usersLoggedInLock.acquire()
-    del usersLoggedIn[username]
-    usersLoggedInLock.release()
+    if userExists(username):    
+        userInfoLock.acquire()
+        userInfo[username]["loggedin"] = "none"
+        userInfoLock.release()
+        print("{} logged out".format(username))
 
 
 def isLoggedIn(username):
-    usersLoggedInLock.acquire()
-    if username in usersLoggedIn:
-        usersLoggedInLock.release()
+    userInfoLock.acquire()
+    if userInfo[username]["loggedin"] != "none":
+        userInfoLock.release()
         return True
     else:
-        usersLoggedInLock.release()
+        userInfoLock.release()
         return False
 
 
 def correctPassword(username, password):
-    userPassListLock.acquire()
-    if userPassList[username] == password:
-        userPassListLock.release()
+    userInfoLock.acquire()
+    if userInfo[username]["password"] == password:
+        userInfoLock.release()
         return True
     else:
-        userPassListLock.release()
+        userInfoLock.release()
         return False
 
 
@@ -119,34 +131,42 @@ def checkTimeDiff(timeStamps, ipUsername):
 
 
 def tempBlockUser(ipUsername):
-    tempBlockedUsers.append(ipUsername)
+    ipUserBlocked.append(ipUsername)
     print("{} blocked".format(ipUsername))
 
 
-def userIsBlocked(ip, username):
+def isBlocked(ip, username):
     ipUsername = "{}:{}".format(ip,username)
-    if ipUsername in tempBlockedUsers:
-        if getTimeStamp() - ipBadAttempts[ipUsername][2] > 180.0:
-            tempBlockedUsers.remove(ipUsername)
+    ipUserBlockedLock.acquire()
+    ipUserFailStampsLock.acquire()
+    if ipUsername in ipUserBlocked:
+        if getTimeStamp() - ipUserFailStamps[ipUsername][2] > 180.0:
+            ipUserBlocked.remove(ipUsername)
+            ipUserBlockedLock.release()
+            ipUserFailStampsLock.release()
             return False
+        ipUserBlockedLock.release()
+        ipUserFailStampsLock.release()
         return True
+    ipUserBlockedLock.release()
+    ipUserFailStampsLock.release()
     return False
 
 
 def badPasswordAttempt(ip, username):
     ipUsername = "{}:{}".format(ip,username)
-    if ipUsername in ipBadAttempts:
-        if len(ipBadAttempts[ipUsername]) < 3:
-            ipBadAttempts[ipUsername].append(getTimeStamp())
-            if len(ipBadAttempts[ipUsername]) == 3:
-                checkTimeDiff(ipBadAttempts[ipUsername], ipUsername)
+    if ipUsername in ipUserFailStamps:
+        if len(ipUserFailStamps[ipUsername]) < 3:
+            ipUserFailStamps[ipUsername].append(getTimeStamp())
+            if len(ipUserFailStamps[ipUsername]) == 3:
+                checkTimeDiff(ipUserFailStamps[ipUsername], ipUsername)
         else:
-            checkTimeDiff(ipBadAttempts[ipUsername], ipUsername)
-            ipBadAttempts[ipUsername].pop(0)
-            ipBadAttempts[ipUsername].append(getTimeStamp())
+            checkTimeDiff(ipUserFailStamps[ipUsername], ipUsername)
+            ipUserFailStamps[ipUsername].pop(0)
+            ipUserFailStamps[ipUsername].append(getTimeStamp())
     else:
-        ipBadAttempts[ipUsername] = []
-        ipBadAttempts[ipUsername].append(getTimeStamp())
+        ipUserFailStamps[ipUsername] = []
+        ipUserFailStamps[ipUsername].append(getTimeStamp())
 
 
         
@@ -159,10 +179,12 @@ def broadcast(msg):
     pass
 
 
-def saveUserPassList():
-    with open("users.txt", "w") as f:
-        for user in userPassList:
-            f.write("{}:{}\n".format(user,userPassList[user]))
+def saveUserInfo():
+    with open("users.json", "w") as f:
+        userInfoLock.acquire()
+        json.dump(userInfo, f, indent=2)
+        userInfoLock.release()
+
 
 def handleClient(connInfo):
     # Connection has been established
@@ -170,59 +192,69 @@ def handleClient(connInfo):
     clientIP = clientAddr[0]
     clientPort = clientAddr[1]
     print("Recieved connection from {}:{}".format(clientIP, clientPort))
-    verifyUser = False
-    while verifyUser == False:
-        # Get username
-        incoming = getLine(clientConn)
-        username = incoming.rstrip()
-        
-        # Get password
-        incoming = getLine(clientConn)
-        password = incoming.rstrip()
-       
-        # Check new user/are they already logged in/is password correcti
-        if userExists(username,password):
-            if userIsBlocked(clientIP, username):
+    try:
+        verifyingUser = True
+        while verifyingUser:
+            # Get username
+            incoming = getLine(clientConn)
+            username = incoming.rstrip()
+            
+            # Get password
+            incoming = getLine(clientConn)
+            password = incoming.rstrip()
+           
+            # Check new user/are they already logged in/is password correction
+            if inputCheck(username) == False or inputCheck(password) == False:
                 msg = "0\n"
                 clientConn.send(msg.encode())
                 continue
 
-            elif isLoggedIn(username):
-                msg = "0\n"
-                clientConn.send(msg.encode())
-                continue
-            else:
-                if not correctPassword(username, password):
+            elif userExists(username):
+           
+                if isBlocked(clientIP, username):
                     msg = "0\n"
                     clientConn.send(msg.encode())
-                    badPasswordAttempt(clientIP, username)
                     continue
-        msg = "1\n"
-        clientConn.send(msg.encode())
-        verifyUser = True
-    # User has passed the login
-    login(username, clientAddr)
-    print("{} logged in".format(username))
 
-    # Notify other users of a login
-    msg = "{} connected.\n".format(username)
-    broadcast(msg) # TODO implement this function
-    # Send user the motd
-    motd(clientConn)
+                elif isLoggedIn(username):
+                    print("already logged")
+                    msg = "0\n"
+                    clientConn.send(msg.encode())
+                    continue
+                else:
+                    if not correctPassword(username, password):
+                        print("bad attempt")
+                        msg = "0\n"
+                        clientConn.send(msg.encode())
+                        badPasswordAttempt(clientIP, username)
+                        continue
+            else:
+                createUser(username, password)
 
-    #listen for messages and commands
+            msg = "1\n"
+            clientConn.send(msg.encode())
+            login(username,clientAddr)
+            verifyingUser = False
+        # User has passed the login
 
+        # Notify other users of a login
+        msg = "{} connected.\n".format(username)
+        broadcast(msg) # TODO implement this function
+        # Send user the motd
+        motd(clientConn)
 
+        #listen for messages and commands
+    except Exception:
+        print("Exception occurred, closing connection")
     clientConn.close()
     logout(username)
-    print("{} logged out".format(username))
-        
+            
 
 running = True
 while running:
     try:
         threading.Thread(target=handleClient, args=(listener.accept(),), daemon=True).start()
     except KeyboardInterrupt:
-        saveUserPassList()
+        saveUserInfo()
         print('\n[Shutting down]')
         running = False
