@@ -5,7 +5,7 @@ import sys
 import time
 import os.path
 from os import path
-
+from queue import Queue
 
 # Get users/passwords from file
 userPassList = {}
@@ -20,14 +20,21 @@ if path.exists("users.txt"):
 
 # This dict holds users who are currentky logged in
 usersLoggedIn = {}
-usersLoogedInLock = threading.Lock()
+usersLoggedInLock = threading.Lock()
+    
+# Dict for ips and last three invalid attempt timestamps
+ipBadAttempts = {}
+ipBadAttemptsLock = threading.Lock()
+
+tempBlockedUsers = {}
+tempBlockedUsersLock = threading.Lock()
 
 # Set the message of the day
 if path.exists("motd.txt"):
     with open("motd.txt", "r") as f:
-        motd = f.read()+"\n"
+        motd = f.read()
 else:
-    motd = "There is no message of the day. :(\n"
+    motd = "There is no message of the day. :("
        
 # Set up linstener that will recieve connections to client users
 port = 27120
@@ -58,7 +65,6 @@ def getLine(conn):
 def userExists(username, password):
     userPassListLock.acquire()
     if username in userPassList:
-        print("User {} already exists.".format(username))
         userPassListLock.release()
         return True
     else:
@@ -102,9 +108,47 @@ def correctIsPassword(username, password):
         return False
 
 
-def motd(clientConn):
-    clientConn.send(motd.encode())
+def getTimeStamp():
+    timeStamp = time.time()
+    print(timeStamp)
+    return timeStamp
 
+def checkTimeDiff(timeStamps, ipUsername):
+    diff = timeStamps[2] - timeStamps[0]
+    if diff <= 30.0:
+        tempBlockUser(ipUsername)
+
+def tempBlockUser(ipUsername):
+    print("User has been blocked")
+    tempBlockedUsers[ipUsername] = "asldfjna"
+
+def userIsBlocked(ip, username):
+    ipUsername = "{}:{}".format(ip,username)
+    if ipUsername in tempBlockedUsers:
+        return True
+    return False
+
+def badPasswordAttempt(ip, username):
+    ipUsername = "{}:{}".format(ip,username)
+    if ipUsername in ipBadAttempts:
+        if len(ipBadAttempts[ipUsername]) < 3:
+            ipBadAttempts[ipUsername].append(getTimeStamp())
+            if len(ipBadAttempts[ipUsername]) == 3:
+                checkTimeDiff(ipBadAttempts[ipUsername], ipUsername)
+        else:
+            checkTimeDiff(ipBadAttempts[ipUsername], ipUsername)
+            ipBadAttempts[ipUsername].pop(0)
+            ipBadAttempts[ipUsername].append(getTimeStamp())
+    else:
+        ipBadAttempts[ipUsername] = []
+        ipBadAttempts[ipUsername].append(getTimeStamp())
+
+
+        
+
+def motd(clientConn):
+    #clientConn.send(motd.encode())
+    pass
 
 def broadcast(msg):
     pass
@@ -115,34 +159,48 @@ def handleClient(connInfo):
     clientIP = clientAddr[0]
     clientPort = clientAddr[1]
     print("Recieved connection from {}:{}".format(clientIP, clientPort))
-    
-    # Get username
-    incoming = getLine(clientConn)
-    username = incoming.rstrip()
-    
-    # Get password
-    incoming = getLine(clientConn)
-    password = incoming.rstrip()
-   
-    # Check if this is a new user/are they already logged in/is password correct
-    if userExists(username,password):
-        if isLoggedIn(username):
-            # TODO what do we do if user is already logged in?
-            # Close connection? Have them try again?
-            pass
-        else:
-            if correctIsPassword(username, password):
-            # TODO set up so that passwords cant be brute forced
-            # Temp block users who fail 3 times in 30 seconds
-            pass
+    verifyUser = False
+    while verifyUser == False:
+        # Get username
+        incoming = getLine(clientConn)
+        username = incoming.rstrip()
+        
+        # Get password
+        incoming = getLine(clientConn)
+        password = incoming.rstrip()
+       
+        # Check if this is a new user/are they already logged in/is password correcti
+        if userExists(username,password):
+            if userIsBlocked(clientIP, username):
+                msg = "0\n"
+                clientConn.send(msg.encode())
+                continue
+
+            elif isLoggedIn(username):
+                print("User already logged in.")
+                msg = "0\n"
+                clientConn.send(msg.encode())
+                continue
+            else:
+                if not correctIsPassword(username, password):
+                    print("bad password attempt")
+                    msg = "0\n"
+                    clientConn.send(msg.encode())
+                    badPasswordAttempt(clientIP, username)
+                    continue
+        msg = "1\n"
+        clientConn.send(msg.encode())
+        verifyUser = True
     # User has passed the login
     login(username, clientAddr)
+    print("login success")
     # Notify other users of a login
-    msg = "{} connected.\n".format(username)
-    broadcast(msg) # TODO implement this function
+    #msg = "{} connected.\n".format(username)
+    #broadcast(msg) # TODO implement this function
     # Send user the motd
-    motd(clientConn)
-
+    #motd(clientConn)
+    clientConn.close()
+    logout(username)
 
 running = True
 while running:
