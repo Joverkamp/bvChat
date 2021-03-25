@@ -89,15 +89,30 @@ def login(username, clientAddr):
     userInfoLock.acquire()
     userInfo[username]["loggedin"] = clientAddr
     userInfoLock.release()
+    
+    msg = "* {} connected.\n".format(username)
+    broadcast(msg)
+    
     print("{} logged in".format(username))
+
 
 def logout(username):
     if userExists(username):    
         userInfoLock.acquire()
         userInfo[username]["loggedin"] = "none"
         userInfoLock.release()
+
+        msg = "* {} disconnected.\n".format(username)
+        broadcast(msg)
+
         print("{} logged out".format(username))
 
+
+def logoutAll():
+    userInfoLock.acquire()
+    for user in userInfo:
+        userInfo[user]["loggedin"] = "none"
+    userInfoLock.release()
 
 def isLoggedIn(username):
     userInfoLock.acquire()
@@ -131,7 +146,9 @@ def checkTimeDiff(timeStamps, ipUsername):
 
 
 def tempBlockUser(ipUsername):
+    ipUserBlockedLock.acquire()
     ipUserBlocked.append(ipUsername)
+    ipUserBlockedLock.release()
     print("{} blocked".format(ipUsername))
 
 
@@ -140,7 +157,7 @@ def isBlocked(ip, username):
     ipUserBlockedLock.acquire()
     ipUserFailStampsLock.acquire()
     if ipUsername in ipUserBlocked:
-        if getTimeStamp() - ipUserFailStamps[ipUsername][2] > 180.0:
+        if getTimeStamp() - ipUserFailStamps[ipUsername][2] > 120.0:
             ipUserBlocked.remove(ipUsername)
             ipUserBlockedLock.release()
             ipUserFailStampsLock.release()
@@ -155,6 +172,7 @@ def isBlocked(ip, username):
 
 def badPasswordAttempt(ip, username):
     ipUsername = "{}:{}".format(ip,username)
+    ipUserFailStampsLock.acquire()
     if ipUsername in ipUserFailStamps:
         if len(ipUserFailStamps[ipUsername]) < 3:
             ipUserFailStamps[ipUsername].append(getTimeStamp())
@@ -167,7 +185,7 @@ def badPasswordAttempt(ip, username):
     else:
         ipUserFailStamps[ipUsername] = []
         ipUserFailStamps[ipUsername].append(getTimeStamp())
-
+    ipUserFailStampsLock.release()
 
         
 
@@ -176,8 +194,35 @@ def motd(clientConn):
     pass
 
 def broadcast(msg):
-    pass
+    for user in userInfo:
+        userInfoLock.acquire()
+        if userInfo[user]["loggedin"] != "none":
+            ipPort = userInfo[user]["loggedin"].split(":")
+            userInfoLock.release()
+            ip = ipPort[0]
+            port = int(ipPort[1])
+            sendMsgSock = socket(AF_INET, SOCK_STREAM)
+            sendMsgSock.connect( (ip, port) )
+            sendMsgSock.send(msg.encode())
+            sendMsgSock.close()
+        else:
+            userInfoLock.release()
+        
 
+def tell(toTell, msg):
+    print("telling")
+    print(msg)
+    if isLoggedIn(toTell): 
+        ipPort = userInfo[toTell]["loggedin"]
+        ip = ipPort[0]
+        port = int(ipPort[1])
+        sendMsgSock = socket(AF_INET, SOCK_STREAM)
+        sendMsgSock.connect( (ip, port) )
+        sendMsgSock.send(msg.encode())
+        sendMsgSock.close()
+    else:
+        userInfo[toTell]["mail"].append(msg)
+    
 
 def saveUserInfo():
     with open("users.json", "w") as f:
@@ -193,24 +238,33 @@ def handleClient(connInfo):
     clientPort = clientAddr[1]
     print("Recieved connection from {}:{}".format(clientIP, clientPort))
     try:
+        incoming = getLine(clientConn)
+        clientsListenPort = incoming.rstrip()
+        clientAddrListen = "{}:{}".format(clientIP,clientsListenPort)
+        # client needs to login an account
+        #     -- username must not already be logged in
+        #     -- password must match
+        #     -- if unique username is given new account is created
+        #     -- cannot have empty input
         verifyingUser = True
         while verifyingUser:
             # Get username
             incoming = getLine(clientConn)
             username = incoming.rstrip()
-            
+             
             # Get password
             incoming = getLine(clientConn)
             password = incoming.rstrip()
-           
-            # Check new user/are they already logged in/is password correction
+          
+            # Check if input is valid
             if inputCheck(username) == False or inputCheck(password) == False:
                 msg = "0\n"
                 clientConn.send(msg.encode())
                 continue
 
             elif userExists(username):
-           
+                # can't login if you are blocked
+                # if blocking time has passed you will be unblocked here
                 if isBlocked(clientIP, username):
                     msg = "0\n"
                     clientConn.send(msg.encode())
@@ -230,31 +284,37 @@ def handleClient(connInfo):
                         continue
             else:
                 createUser(username, password)
-
+            # verification success
             msg = "1\n"
             clientConn.send(msg.encode())
-            login(username,clientAddr)
+            login(username,clientAddrListen)
             verifyingUser = False
-        # User has passed the login
+        # while user is connected receive messages and commands
+        participating = True
+        while participating:
+            incoming = getLine(clientConn).rstrip()
+            if incoming.startswith("/"):
+                command = incoming.split()[0][1:]
+                if command == "exit":
+                    participating = False
+            else:
+                msg = "{}: {}\n".format(username, incoming)
+                broadcast(msg)
 
-        # Notify other users of a login
-        msg = "{} connected.\n".format(username)
-        broadcast(msg) # TODO implement this function
-        # Send user the motd
-        motd(clientConn)
-
-        #listen for messages and commands
+    # handle diconnects         
     except Exception:
-        print("Exception occurred, closing connection")
+       print("Exception occurred, closing connection")
     clientConn.close()
     logout(username)
             
-
+# Listen for users to join the server
 running = True
 while running:
     try:
         threading.Thread(target=handleClient, args=(listener.accept(),), daemon=True).start()
+    # When server closes save data and log everyone out
     except KeyboardInterrupt:
+        logoutAll()
         saveUserInfo()
         print('\n[Shutting down]')
         running = False

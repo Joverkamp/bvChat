@@ -2,11 +2,8 @@
 from socket import *
 from sys import argv
 from pathlib import Path
-
-
-tryingLogin = True
-
-loginReport = '0'
+import threading
+import os
 
 def getFullMsg(conn, msgLength):
     msg = b''
@@ -26,30 +23,80 @@ def getLine(conn):
             break
     return msg.decode()
 
-# Set server/port from command line
-progname = argv[0]
-if len(argv) != 3:
-    print("Usage: python3 {} <IPaddress> <port>".format(progname))
-    exit(1)
-serverIP = argv[1]
-serverPort = int(argv[2])
+def inputCheck(toCheck):
+    toCheck = toCheck.replace(" ","")
+    if toCheck == "" or len(toCheck) == 0:
+        return False
+    return True
 
-# Establish connection
-clientSock = socket(AF_INET, SOCK_STREAM)
-clientSock.connect( (serverIP, serverPort) )
+def handleServer(serverSock, listeningPort):
+    msg = "{}\n".format(listeningPort)
+    serverSock.send(msg.encode())
 
-#send username and password
-while (tryingLogin == True):
-    username = input("Enter username: ") + "\n"
-    password = input("Enter your password: ") + "\n"
-    clientSock.send(username.encode())
-    clientSock.send(password.encode())
-    loginReport = getLine(clientSock)
-    print(loginReport)
-    if(loginReport == '0\n'):
-        print(loginReport + "FAILURE")
-    elif (loginReport == '1\n'):
-        tryingLogin = False
+    tryingLogin = True
+    loginReport = '0'
+    try:
+        #serverSock, serverAddr = connInfo
+        while (tryingLogin == True):
+            username = input("Enter username: ") + "\n"
+            password = input("Enter your password: ") + "\n"
+            serverSock.send(username.encode())
+            serverSock.send(password.encode())
+            loginReport = getLine(serverSock).rstrip()
+            if(loginReport == '0'):
+                continue
+            elif (loginReport == '1'):
+                tryingLogin = False
+        connected = True 
+        while connected == True:
+            msg = input()
+            if inputCheck(msg):
+                msg = msg+"\n"
+                serverSock.send(msg.encode())
+                if msg.rstrip() == "/exit":
+                    connected = False
+    except Exception:
+        pass
+    serverSock.close()
+    os._exit(0)
+
+def receiveMessage(connInfo):
+    clientConn, clientInfo = connInfo
+    msg = getLine(clientConn).rstrip()
+    print(msg)
+    clientConn.close()
+
+def listen(listener):
+    #Create a listening socket to receive requests from peers
+    listener.listen(4)
+    running = True
+    while running:
+        threading.Thread(target=receiveMessage, args=(listener.accept(),),daemon=True).start()
 
 
-clientSock.close()
+if __name__ == "__main__":
+    # Set server/port from command line
+    progname = argv[0]
+    if len(argv) != 3:
+        print("Usage: python3 {} <IPaddress> <port>".format(progname))
+        exit(1)
+    serverIP = argv[1]
+    serverPort = int(argv[2])
+
+    # Establish connection
+    serverSock = socket(AF_INET, SOCK_STREAM)
+    serverSock.connect( (serverIP, serverPort) )
+
+    listener = socket(AF_INET, SOCK_STREAM)
+    listener.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+    listener.bind(('', 0))
+    listeningPort = listener.getsockname()[1]
+    # This thread will be for sending messaged with the server
+    serverThread = threading.Thread(target=handleServer, args=(serverSock,listeningPort,),daemon=False).start()
+
+    # This thread will be for receiving messages from the server
+    listenThread = threading.Thread(target=listen, args=(listener,), daemon=False).start()
+
+#    serverThread.join()
+#    listenThread.join()
+
