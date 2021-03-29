@@ -29,6 +29,14 @@ def inputCheck(toCheck):
         return False
     return True
 
+def printCmds():
+    print("/who: Displays the names of active users.")
+    print("/exit: Disconnect from client and quit the application.")
+    print("/tell user msg: Sends a direct message, msg, to the user named.")
+    print("/motd: Displays the Message of the Day.")
+    print("/me msg: Sends an emote message as '*username msg'.")
+    print("/help: Displays a list of commands.")
+
 def handleServer(serverSock, listeningPort):
     # what port will we receive messages on
     msg = "{}\n".format(listeningPort)
@@ -61,7 +69,9 @@ def handleServer(serverSock, listeningPort):
         connected = True 
         while connected == True:
             msg = input()
-            if inputCheck(msg):
+            if msg.startswith("/help"):
+                printCmds()
+            elif inputCheck(msg):
                 msg = msg+"\n"
                 serverSock.send(msg.encode())
                 if msg.rstrip() == "/exit":
