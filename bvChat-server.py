@@ -212,8 +212,8 @@ def broadcast(msg):
         
 
 def tell(toTell, msg, username):
-    userInfoLock.acquire()
     if isLoggedIn(toTell):
+        userInfoLock.acquire()
         ipPort = userInfo[toTell]["loggedin"].split(":")
         userInfoLock.release()
 
@@ -226,6 +226,7 @@ def tell(toTell, msg, username):
         sendMsgSock.send(msg.encode())
         sendMsgSock.close()
     else:
+        userInfoLock.acquire()
         userInfo[toTell]["mail"].append(msg)
         userInfoLock.release()
 
