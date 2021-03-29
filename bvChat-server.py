@@ -19,8 +19,9 @@ if os.path.exists("users.json") and os.stat("users.json").st_size != 0:
     with open("users.json", "r") as f:
         userInfo = json.load(f)
 
-# dict of ip:usernames and a list of there last three failed
+# dict of ip:usernames and a list of their last three failed
 # login attempts
+# used for blocking brute force attempts
 ipUserFailStamps = {}
 ipUserFailStampsLock = threading.Lock()
 
@@ -209,20 +210,23 @@ def broadcast(msg):
             userInfoLock.release()
         
 
-def tell(toTell, msg):
-    print("telling")
-    print(msg)
+def tell(toTell, msg, username):
     if isLoggedIn(toTell): 
-        ipPort = userInfo[toTell]["loggedin"]
+        ipPort = userInfo[toTell]["loggedin"].split(":")
         ip = ipPort[0]
         port = int(ipPort[1])
+
+        msg = "(DM){}: {}\n".format(username, msg)
         sendMsgSock = socket(AF_INET, SOCK_STREAM)
         sendMsgSock.connect( (ip, port) )
         sendMsgSock.send(msg.encode())
         sendMsgSock.close()
     else:
         userInfo[toTell]["mail"].append(msg)
-    
+
+def help_():
+    return
+
 
 def saveUserInfo():
     with open("users.json", "w") as f:
@@ -233,19 +237,28 @@ def saveUserInfo():
 
 def handleClient(connInfo):
     # Connection has been established
+    # Set all clietn info
     clientConn, clientAddr = connInfo
     clientIP = clientAddr[0]
     clientPort = clientAddr[1]
     print("Recieved connection from {}:{}".format(clientIP, clientPort))
     try:
         incoming = getLine(clientConn)
-        clientsListenPort = incoming.rstrip()
-        clientAddrListen = "{}:{}".format(clientIP,clientsListenPort)
+        clientListenPort = incoming.rstrip()
+        clientAddrListen = "{}:{}".format(clientIP,clientListenPort)
         # client needs to login an account
         #     -- username must not already be logged in
         #     -- password must match
         #     -- if unique username is given new account is created
         #     -- cannot have empty input
+        #     -- send appropriate error codes for client and loop upom failure
+        # ERROR CODES
+        #     -- "badpass" wrong password
+        #     -- "blocked" user:ip is temporarily blocked
+        #     -- "alrlogd" someone is already logged in under that username
+        #     -- "badinpt" you typed invalid input
+        #     -- "success" you successfully logged in
+
         verifyingUser = True
         while verifyingUser:
             # Get username
@@ -269,7 +282,6 @@ def handleClient(connInfo):
                     msg = "0\n"
                     clientConn.send(msg.encode())
                     continue
-
                 elif isLoggedIn(username):
                     print("already logged")
                     msg = "0\n"
@@ -284,7 +296,9 @@ def handleClient(connInfo):
                         continue
             else:
                 createUser(username, password)
-            # verification success
+            # verification success 
+            # login user
+            # send confirmation code to client and begin listening for messages
             msg = "1\n"
             clientConn.send(msg.encode())
             login(username,clientAddrListen)
@@ -297,6 +311,15 @@ def handleClient(connInfo):
                 command = incoming.split()[0][1:]
                 if command == "exit":
                     participating = False
+                elif command == "tell":
+                    try:
+                        restOfMsg = incoming[6:]
+                        toTell = restOfMsg.split()[0]
+                        msg = restOfMsg[len(toTell)+1:]
+                        tell(toTell, msg, username)
+                    except:
+                        help_(clientConn)
+                    
             else:
                 msg = "{}: {}\n".format(username, incoming)
                 broadcast(msg)

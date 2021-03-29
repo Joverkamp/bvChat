@@ -30,9 +30,11 @@ def inputCheck(toCheck):
     return True
 
 def handleServer(serverSock, listeningPort):
+    # what port will we receive messages on
     msg = "{}\n".format(listeningPort)
     serverSock.send(msg.encode())
 
+    # verifying login
     tryingLogin = True
     loginReport = '0'
     try:
@@ -47,6 +49,8 @@ def handleServer(serverSock, listeningPort):
                 continue
             elif (loginReport == '1'):
                 tryingLogin = False
+
+        # sending messages to server
         connected = True 
         while connected == True:
             msg = input()
