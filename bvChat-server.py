@@ -252,6 +252,7 @@ def handleClient(connInfo):
         #     -- if unique username is given new account is created
         #     -- cannot have empty input
         #     -- send appropriate error codes for client and loop upom failure
+        # TODO add these error codes on client side
         # ERROR CODES
         #     -- "badpass" wrong password
         #     -- "blocked" user:ip is temporarily blocked
@@ -318,7 +319,7 @@ def handleClient(connInfo):
                         msg = restOfMsg[len(toTell)+1:]
                         tell(toTell, msg, username)
                     except:
-                        help_(clientConn)
+                        help_()
                     
             else:
                 msg = "{}: {}\n".format(username, incoming)
