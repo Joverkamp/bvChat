@@ -45,9 +45,16 @@ def handleServer(serverSock, listeningPort):
             serverSock.send(username.encode())
             serverSock.send(password.encode())
             loginReport = getLine(serverSock).rstrip()
-            if(loginReport == '0'):
-                continue
-            elif (loginReport == '1'):
+            if(loginReport == "badpass"):
+                print("Wrong Password, try again.")
+            elif(loginReport == "blocked"):
+                print("Too many incorrect entries, user blocked.")
+            elif(loginReport == "alrlogd"):
+                print("That Username is already in use.")
+            elif(loginReport == "badinpt"):
+                print("Entered input is invalid.")
+            elif (loginReport == 'success'):
+                print("Welcome to bvChat.")
                 tryingLogin = False
 
         # sending messages to server
