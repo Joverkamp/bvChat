@@ -115,6 +115,7 @@ def logoutAll():
         userInfo[user]["loggedin"] = "none"
     userInfoLock.release()
 
+
 def isLoggedIn(username):
     userInfoLock.acquire()
     if userInfo[username]["loggedin"] != "none":
@@ -189,10 +190,10 @@ def badPasswordAttempt(ip, username):
     ipUserFailStampsLock.release()
 
         
-
 def motd(clientConn):
     #clientConn.send(motd.encode())
     pass
+
 
 def broadcast(msg):
     for user in userInfo:
@@ -211,8 +212,11 @@ def broadcast(msg):
         
 
 def tell(toTell, msg, username):
-    if isLoggedIn(toTell): 
+    userInfoLock.acquire()
+    if isLoggedIn(toTell):
         ipPort = userInfo[toTell]["loggedin"].split(":")
+        userInfoLock.release()
+
         ip = ipPort[0]
         port = int(ipPort[1])
 
@@ -223,6 +227,8 @@ def tell(toTell, msg, username):
         sendMsgSock.close()
     else:
         userInfo[toTell]["mail"].append(msg)
+        userInfoLock.release()
+
 
 def help_():
     return
@@ -272,7 +278,7 @@ def handleClient(connInfo):
           
             # Check if input is valid
             if inputCheck(username) == False or inputCheck(password) == False:
-                msg = "0\n"
+                msg = "badinpt\n"
                 clientConn.send(msg.encode())
                 continue
 
@@ -280,18 +286,16 @@ def handleClient(connInfo):
                 # can't login if you are blocked
                 # if blocking time has passed you will be unblocked here
                 if isBlocked(clientIP, username):
-                    msg = "0\n"
+                    msg = "blocked\n"
                     clientConn.send(msg.encode())
                     continue
                 elif isLoggedIn(username):
-                    print("already logged")
-                    msg = "0\n"
+                    msg = "alrlogd\n"
                     clientConn.send(msg.encode())
                     continue
                 else:
                     if not correctPassword(username, password):
-                        print("bad attempt")
-                        msg = "0\n"
+                        msg = "badpass\n"
                         clientConn.send(msg.encode())
                         badPasswordAttempt(clientIP, username)
                         continue
@@ -300,7 +304,7 @@ def handleClient(connInfo):
             # verification success 
             # login user
             # send confirmation code to client and begin listening for messages
-            msg = "1\n"
+            msg = "success\n"
             clientConn.send(msg.encode())
             login(username,clientAddrListen)
             verifyingUser = False
