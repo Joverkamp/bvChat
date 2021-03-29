@@ -61,6 +61,18 @@ def getLine(conn):
             break
     return msg.decode()
 
+
+def sendMessage(msg, username):
+    ipPort =  userInfo[username]["loggedin"].split(":")
+    ip = ipPort[0]
+    port = int(ipPort[1])
+    msg = msg+"\n"
+    sendMsgSock = socket(AF_INET, SOCK_STREAM)
+    sendMsgSock.connect( (ip, port) )
+    sendMsgSock.send(msg.encode())
+    sendMsgSock.close()
+
+
 def inputCheck(toCheck):
     toCheck = toCheck.replace(" ","")
     if toCheck == "" or len(toCheck) == 0:
@@ -190,9 +202,16 @@ def badPasswordAttempt(ip, username):
     ipUserFailStampsLock.release()
 
         
-def motd(clientConn):
-    #clientConn.send(motd.encode())
-    pass
+def getMail(username): 
+    userInfoLock.acquire()
+    ipPort =  userInfo[username]["loggedin"].split(":")
+    mail = userInfo[username]["mail"]
+
+    if len(mail) > 0:
+        for msg in mail:
+            print(msg)
+            sendMessage(msg, username)
+    userInfoLock.release()
 
 
 def broadcast(msg):
@@ -226,13 +245,10 @@ def tell(toTell, msg, username):
         sendMsgSock.send(msg.encode())
         sendMsgSock.close()
     else:
-        userInfoLock.acquire()
-        userInfo[toTell]["mail"].append(msg)
-        userInfoLock.release()
-
-
-def help_():
-    return
+        if userExists(toTell):
+            userInfoLock.acquire()
+            userInfo[toTell]["mail"].append("(MAIL){}: {}".format(username,msg))
+            userInfoLock.release()
 
 
 def saveUserInfo():
@@ -308,6 +324,9 @@ def handleClient(connInfo):
             msg = "success\n"
             clientConn.send(msg.encode())
             login(username,clientAddrListen)
+            #sendMessage(motd)
+            getMail(username)
+            sendMessage(motd, username)
             verifyingUser = False
         # while user is connected receive messages and commands
         participating = True
@@ -325,8 +344,7 @@ def handleClient(connInfo):
                         if inputCheck(msg) == True:
                             tell(toTell, msg, username)
                     except:
-                        help_()
-            
+                        pass 
                     
             else:
                 msg = "{}: {}\n".format(username, incoming)
