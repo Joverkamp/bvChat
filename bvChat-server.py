@@ -322,9 +322,11 @@ def handleClient(connInfo):
                         restOfMsg = incoming[6:]
                         toTell = restOfMsg.split()[0]
                         msg = restOfMsg[len(toTell)+1:]
-                        tell(toTell, msg, username)
+                        if inputCheck(msg) == True:
+                            tell(toTell, msg, username)
                     except:
                         help_()
+            
                     
             else:
                 msg = "{}: {}\n".format(username, incoming)
