@@ -7,7 +7,7 @@ import os
 from queue import Queue
 import json
 
-# load in user data that is saved upon server termination
+# load in user data
 # this data includes
 #     -- username
 #     -- password
@@ -29,12 +29,12 @@ ipUserFailStampsLock = threading.Lock()
 ipUserBlocked = [] 
 ipUserBlockedLock = threading.Lock()
 
-# Set the message of the day
+# Set the message of the day from text file
 if os.path.exists("motd.txt"):
     with open("motd.txt", "r") as f:
-        motd = f.read()
+        todaysMsg = f.read()
 else:
-    motd = "There is no message of the day. :("
+    todaysMsg = "There is no message of the day. :("
        
 # Set up linstener that will recieve connections to client users
 port = 27120
@@ -62,8 +62,8 @@ def getLine(conn):
     return msg.decode()
 
 
-def sendMessage(msg, username):
-    ipPort =  userInfo[username]["loggedin"].split(":")
+# sends a newline terminated string to a given ip port list/tuple
+def sendMessage(msg, ipPort):
     ip = ipPort[0]
     port = int(ipPort[1])
     msg = msg+"\n"
@@ -72,14 +72,16 @@ def sendMessage(msg, username):
     sendMsgSock.send(msg.encode())
     sendMsgSock.close()
 
-
+# Returns false is a string is empty. Can also add any other prohibited
+# string behaiors here
 def inputCheck(toCheck):
     toCheck = toCheck.replace(" ","")
     if toCheck == "" or len(toCheck) == 0:
         return False
     return True
 
-
+# Given a username and password, adds user to dictionary and initializes
+# other data 
 def createUser(username, password):
     userInfoLock.acquire()
     userInfo[username] = {}
@@ -88,6 +90,7 @@ def createUser(username, password):
     userInfo[username]["mail"] = []
     userInfoLock.release()
 
+# Checks if user exists in the global dictionary
 def userExists(username):
     userInfoLock.acquire()
     if username in userInfo:
@@ -97,30 +100,32 @@ def userExists(username):
         userInfoLock.release()
         return False
 
-
+# Adds login data to user dict and broadcasts to users of a login
 def login(username, clientAddr): 
     userInfoLock.acquire()
     userInfo[username]["loggedin"] = clientAddr
     userInfoLock.release()
     
-    msg = "* {} connected.\n".format(username)
+    msg = "[{} connected]\n".format(username)
     broadcast(msg)
     
     print("{} logged in".format(username))
 
-
+# Removes login data from user dict and broadcasts to users of a logout
 def logout(username):
     if userExists(username):    
         userInfoLock.acquire()
         userInfo[username]["loggedin"] = "none"
         userInfoLock.release()
 
-        msg = "* {} disconnected.\n".format(username)
+        msg = "[{} disconnected]\n".format(username)
         broadcast(msg)
 
         print("{} logged out".format(username))
 
 
+# Remove all current logins on server termination and startup to avoid 
+# misleading login status
 def logoutAll():
     userInfoLock.acquire()
     for user in userInfo:
@@ -128,16 +133,18 @@ def logoutAll():
     userInfoLock.release()
 
 
+# Checks if user is logged in
 def isLoggedIn(username):
-    userInfoLock.acquire()
-    if userInfo[username]["loggedin"] != "none":
-        userInfoLock.release()
-        return True
-    else:
-        userInfoLock.release()
-        return False
+    if userExists(username):
+        userInfoLock.acquire()
+        if userInfo[username]["loggedin"] != "none":
+            userInfoLock.release()
+            return True
+    userInfoLock.release()
+    return False
 
 
+# Checks if password matches username
 def correctPassword(username, password):
     userInfoLock.acquire()
     if userInfo[username]["password"] == password:
@@ -147,18 +154,21 @@ def correctPassword(username, password):
         userInfoLock.release()
         return False
 
-
+# Get current time
 def getTimeStamp():
     timeStamp = time.time()
     return timeStamp
 
 
+# Checks the difference between most recent 3rd and most recent timestamps
+# if the dii is <= 30, block the user
 def checkTimeDiff(timeStamps, ipUsername):
     diff = timeStamps[2] - timeStamps[0]
     if diff <= 30.0:
         tempBlockUser(ipUsername)
 
 
+# add ip:username combo to a blocked list
 def tempBlockUser(ipUsername):
     ipUserBlockedLock.acquire()
     ipUserBlocked.append(ipUsername)
@@ -166,6 +176,8 @@ def tempBlockUser(ipUsername):
     print("{} blocked".format(ipUsername))
 
 
+# Check if a ip and username combo is blocked. Also if user is blocked and 
+# 2 minuted have passed, unblock ip username
 def isBlocked(ip, username):
     ipUsername = "{}:{}".format(ip,username)
     ipUserBlockedLock.acquire()
@@ -184,6 +196,8 @@ def isBlocked(ip, username):
     return False
 
 
+# Called on a bad password attempt. Adds timestamp of failure to a dict of
+# ip:username combos. If 3 stamps are already recored boot out the oldest
 def badPasswordAttempt(ip, username):
     ipUsername = "{}:{}".format(ip,username)
     ipUserFailStampsLock.acquire()
@@ -201,49 +215,39 @@ def badPasswordAttempt(ip, username):
         ipUserFailStamps[ipUsername].append(getTimeStamp())
     ipUserFailStampsLock.release()
 
-        
+
+# Send mail received offline and send to user on login
 def getMail(username): 
     userInfoLock.acquire()
     ipPort =  userInfo[username]["loggedin"].split(":")
     mail = userInfo[username]["mail"]
+    userInfo[username]["mail"] = []
 
     if len(mail) > 0:
         for msg in mail:
-            print(msg)
-            sendMessage(msg, username)
+            sendMessage(msg, ipPort)
     userInfoLock.release()
 
 
+# Send msg to all currently logged in users
 def broadcast(msg):
+    userInfoLock.acquire()
     for user in userInfo:
-        userInfoLock.acquire()
         if userInfo[user]["loggedin"] != "none":
             ipPort = userInfo[user]["loggedin"].split(":")
-            userInfoLock.release()
-            ip = ipPort[0]
-            port = int(ipPort[1])
-            sendMsgSock = socket(AF_INET, SOCK_STREAM)
-            sendMsgSock.connect( (ip, port) )
-            sendMsgSock.send(msg.encode())
-            sendMsgSock.close()
-        else:
-            userInfoLock.release()
+            sendMessage(msg, ipPort)
+    userInfoLock.release()
         
 
+# Send message to an existing user, if they are offline, add ,sg to their mail
 def tell(toTell, msg, username):
     if isLoggedIn(toTell):
         userInfoLock.acquire()
         ipPort = userInfo[toTell]["loggedin"].split(":")
         userInfoLock.release()
 
-        ip = ipPort[0]
-        port = int(ipPort[1])
-
         msg = "(DM){}: {}\n".format(username, msg)
-        sendMsgSock = socket(AF_INET, SOCK_STREAM)
-        sendMsgSock.connect( (ip, port) )
-        sendMsgSock.send(msg.encode())
-        sendMsgSock.close()
+        sendMessage(msg, ipPort) 
     else:
         if userExists(toTell):
             userInfoLock.acquire()
@@ -251,6 +255,31 @@ def tell(toTell, msg, username):
             userInfoLock.release()
 
 
+# broadcast emote msg
+def me(username, msg):
+    msg = "*{} {}".format(username, msg)
+    broadcast(msg)
+
+# Send every user who is currently loggeg in to ipPort
+def who(ipPort):
+    ipPort = ipPort.split(":")
+
+    userInfoLock.acquire()
+    for user in userInfo:
+        if userInfo[user]["loggedin"] != "none":
+            msg = "{}\n".format(user)
+            sendMessage(msg, ipPort)
+    userInfoLock.release()
+
+
+# Sends moty to ipPort
+def motd(ipPort):
+    ipPort = ipPort.split(":")
+    msg = "(MOTD){}\n".format(todaysMsg)
+    sendMessage(msg, ipPort)
+
+
+# Save user info dict as json for easy readback
 def saveUserInfo():
     with open("users.json", "w") as f:
         userInfoLock.acquire()
@@ -305,6 +334,7 @@ def handleClient(connInfo):
                 if isBlocked(clientIP, username):
                     msg = "blocked\n"
                     clientConn.send(msg.encode())
+                    badPasswordAttempt(clientIP, username)
                     continue
                 elif isLoggedIn(username):
                     msg = "alrlogd\n"
@@ -324,40 +354,58 @@ def handleClient(connInfo):
             msg = "success\n"
             clientConn.send(msg.encode())
             login(username,clientAddrListen)
-            #sendMessage(motd)
+            motd(clientAddrListen)
             getMail(username)
-            sendMessage(motd, username)
+           # sendMessage(motd, username)
             verifyingUser = False
         # while user is connected receive messages and commands
         participating = True
         while participating:
             incoming = getLine(clientConn).rstrip()
-            if incoming.startswith("/"):
-                command = incoming.split()[0][1:]
-                if command == "exit":
-                    participating = False
-                elif command == "tell":
-                    try:
-                        restOfMsg = incoming[6:]
-                        toTell = restOfMsg.split()[0]
-                        msg = restOfMsg[len(toTell)+1:]
-                        if inputCheck(msg) == True:
-                            tell(toTell, msg, username)
-                    except:
-                        pass 
-                    
-            else:
-                msg = "{}: {}\n".format(username, incoming)
-                broadcast(msg)
+            if inputCheck(incoming) == True:
+                if incoming.startswith("/"):
+                    command = incoming.split()[0][1:]
+                    if command == "exit":
+                        participating = False
+                    elif command == "tell":
+                        try:
+                            restOfMsg = incoming[6:]
+                            toTell = restOfMsg.split()[0]
+                            msg = restOfMsg[len(toTell)+1:]
+                            if inputCheck(msg) == True:
+                                tell(toTell, msg, username)
+                        except:
+                            pass
+                    elif command == "me":
+                        try:
+                            msg = incoming[4:]
+                            if inputCheck(msg) == True:
+                                me(username, msg)
+                        except:
+                            pass
+                    elif command == "who":
+                        who(clientAddrListen)
+                    elif command == "motd":
+                        motd(clientAddrListen)
+                    else:
+                        msg = "{}: {}\n".format(username, incoming)
+                        broadcast(msg)
 
-    # handle diconnects         
+         
+                        
+                else:
+                    msg = "{}: {}\n".format(username, incoming)
+                    broadcast(msg)
+
+     #handle diconnects         
     except Exception:
-       print("Exception occurred, closing connection")
-    clientConn.close()
+        print("Exception occurred, closing connection with {}:{}".format(clientIP, clientPort))
     logout(username)
+    clientConn.close()
             
 # Listen for users to join the server
 running = True
+print("Listening for connections on port {}".format(port))
 while running:
     try:
         threading.Thread(target=handleClient, args=(listener.accept(),), daemon=True).start()

@@ -78,6 +78,7 @@ def handleServer(serverSock, listeningPort):
                     connected = False
     except Exception:
         pass
+
     serverSock.close()
     os._exit(0)
 
